@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='scte35-python',
-    version='0.0.1-SNAPSHOT',
+    version='1.0',
     packages=['scte35'],
     url='',
     license='MIT License',
