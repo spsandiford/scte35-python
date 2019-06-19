@@ -10,7 +10,7 @@ import bitstring
 from scte35.exceptions import *
 
 SPLICE_INFO_SECTION_TABLE_ID = 0xfc
-CUEI_IDENTIFIER = 0x43554549           # ASCII "CUEI"
+CUEI_IDENTIFIER = 0x43554549  # ASCII "CUEI"
 
 
 @unique
@@ -47,7 +47,6 @@ class SegmentationType(Enum):
 
 @unique
 class SpliceCommandType(Enum):
-
     # The splice_null() command allows a splice_info_table to be sent that can carry descriptors without
     # having to send one of the other defined commands. This command may also be used as a “heartbeat message”
     # for monitoring cue injection equipment integrity and link integrity
@@ -419,7 +418,7 @@ class SegmentationDescriptor(SpliceDescriptor):
         return timedelta(seconds=self.segmentation_duration / 90000.0)
 
     @property
-    def segmentation_upid_type(self) ->SegmentationUpidType:
+    def segmentation_upid_type(self) -> SegmentationUpidType:
         if self._segmentation_event_cancel_indicator:
             raise FieldNotDefinedException()
         else:
@@ -524,14 +523,14 @@ class SegmentationDescriptor(SpliceDescriptor):
 
             descriptor._segmentation_upid_type = SegmentationUpidType(input_bytes.read('uint:8'))
             segmentation_upid_length = input_bytes.read('uint:8')
-            descriptor._segmentation_upid_bytes = input_bytes.read(segmentation_upid_length*8)
+            descriptor._segmentation_upid_bytes = input_bytes.read(segmentation_upid_length * 8)
 
             descriptor._segmentation_type = SegmentationType(input_bytes.read('uint:8'))
             descriptor._segment_num = input_bytes.read('uint:8')
             descriptor._segments_expected = input_bytes.read('uint:8')
 
             if (descriptor._segmentation_type is SegmentationType.PROVIDER_PLACEMENT_OPPORTUNITY_START) or \
-                (descriptor._segmentation_type is SegmentationType.PROVIDER_PLACEMENT_OPPORTUNITY_END):
+                    (descriptor._segmentation_type is SegmentationType.PROVIDER_PLACEMENT_OPPORTUNITY_END):
                 try:
                     descriptor._sub_segment_num = input_bytes.read('uint:8')
                     descriptor._sub_segments_expected = input_bytes.read('uint:8')
@@ -654,7 +653,7 @@ class SpliceInfoSection(object):
             raise ReservedBitsException()
 
         section_length = input_bitarray.read('uint:12')
-        section_bitarray = input_bitarray.read(section_length*8)
+        section_bitarray = input_bitarray.read(section_length * 8)
 
         protocol_version = section_bitarray.read("uint:8")
         encrypted_packet = section_bitarray.read("bool")
@@ -673,7 +672,7 @@ class SpliceInfoSection(object):
             raise
 
         section = SpliceInfoSection(pts_adjustment, tier, splice_command_type)
-        splice_command_bitarray = section_bitarray.read(splice_command_length*8)
+        splice_command_bitarray = section_bitarray.read(splice_command_length * 8)
         if splice_command_type is SpliceCommandType.SPLICE_NULL:
             raise NotImplementedException("SPLICE_NULL is not implemented")
         elif splice_command_type is SpliceCommandType.SPLICE_SCHEDULE:
@@ -688,13 +687,13 @@ class SpliceInfoSection(object):
             raise NotImplementedException("PRIVATE_COMMAND is not implemented")
 
         descriptor_loop_length = section_bitarray.read('uint:16')
-        descriptor_loop_bitarray = section_bitarray.read(descriptor_loop_length*8)
+        descriptor_loop_bitarray = section_bitarray.read(descriptor_loop_length * 8)
 
         while descriptor_loop_bitarray.bitpos < descriptor_loop_bitarray.len:
             try:
                 splice_descriptor_tag = SpliceDescriptorType(descriptor_loop_bitarray.read('uint:8'))
                 descriptor_length = descriptor_loop_bitarray.read('uint:8')
-                descriptor_bitarray = descriptor_loop_bitarray.read(descriptor_length*8)
+                descriptor_bitarray = descriptor_loop_bitarray.read(descriptor_length * 8)
 
                 if splice_descriptor_tag is SpliceDescriptorType.AVAIL_DESCRIPTOR:
                     section._descriptors.append(AvailDescriptor.from_bytes(descriptor_bitarray))
@@ -712,11 +711,57 @@ class SpliceInfoSection(object):
 
 class HlsCueTag(object):
     """
+    Ad cues and other signaling metadata are placed into the HLS M3U8 manifest file using HLS tags and attribute lists.
+    The #EXT-X-SCTE35 is the only tag defined by this standard.
+
+    Example:
     #EXT-X-SCTE35:TYPE=0x34,CUE=/DA0AAD6i72m///wBQb+Njmu9gAeAhxDVUVJpu7KTH//AAEMERIICAAF3oCm7spMNAEDjopN5w==,ELAPSED=0.000
     """
 
-    def __init__(self, cue_text:str):
-        m = re.match(r'^#?EXT-X-SCTE35:(.*)$', cue_text)
+    def __init__(self, cue_text: str):
+        cue_components = HlsCueTag.tag_components(cue_text)
+
+        if 'CUE' in cue_components.keys():
+            self._splice_info_section = SpliceInfoSection.from_bytes(base64.standard_b64decode(cue_components['CUE']))
+
+        if 'DURATION' in cue_components.keys():
+            self._duration = cue_components['DURATION']
+
+        if 'ELAPSED' in cue_components.keys():
+            self._elapsed = cue_components['ELAPSED']
+
+        if 'ID' in cue_components.keys():
+            self._cue_id = cue_components['ID']
+
+        if 'TIME' in cue_components.keys():
+            self._cue_time = cue_components['TIME']
+
+        if 'TYPE' in cue_components.keys():
+            self._cue_type = SegmentationType(cue_components['TYPE'])
+
+        if 'UPID' in cue_components.keys():
+            self._upid = cue_components['UPID']
+
+        if 'BLACKOUT' in cue_components.keys():
+            self._blackout = cue_components['BLACKOUT']
+
+        if 'CUE-OUT' in cue_components.keys():
+            self._cue_out = cue_components['CUE-OUT']
+
+        if 'CUE-IN' in cue_components.keys():
+            self._cue_in = cue_components['CUE-IN']
+
+        if 'SEGNE' in cue_components.keys():
+            self._segne = cue_components['SEGNE']
+
+    @staticmethod
+    def tag_components(cue_text: str) -> dict:
+        """
+        Given an HLS cue tag string, return the raw components of the cue as a dictionary.  For tag attribute details,
+        see [SCTE 35 2017].  In practice, the quoted-string elements may or may not have quotation marks
+        """
+        output_components = dict()
+        m = re.match(r'^#EXT-X-SCTE35:(.*)$', cue_text)
         if m:
             try:
                 cue_params = m.group(1)
@@ -725,38 +770,175 @@ class HlsCueTag(object):
         else:
             raise NotAnHLSCueTag()
 
-        parameters = cue_params.split(',')
-        for param in parameters:
-            components = param.split('=', 1)
-            cue_param_name = components[0]
-            cue_param_value = components[1]
+        # Attribute Name: CUE
+        # Attribute Type: String
+        # Attribute Required: Required
+        # Description: The SCTE 35 binary message encoded in Base64 as defined in section 7.4 of [RFC 4648]
+        #   with W3C recommendations.
+        m_cue = re.match(r'.*CUE=\"?((?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)\"?.*',
+                         cue_params)
+        if m_cue:
+            try:
+                output_components['CUE'] = m_cue.group(1)
+            except IndexError:
+                raise MissingCueException("An HLS Cue Tag must contain a CUE attribute")
+        else:
+            raise MissingCueException("An HLS Cue Tag must contain a CUE attribute")
 
-            if cue_param_name == "CUE":
-                self._splice_info_section = \
-                    SpliceInfoSection.from_bytes(base64.standard_b64decode(cue_param_value))
-            elif cue_param_name == "DURATION":
-                self._duration = float(cue_param_value)
-            elif cue_param_name == "ELAPSED":
-                self._elapsed = float(cue_param_value)
-            elif cue_param_name == "ID":
-                self._cue_id = cue_param_value
-            elif cue_param_name == "TIME":
-                self._cue_time = float(cue_param_value)
-            elif cue_param_name == "TYPE":
-                if re.match(r'0x[0-9A-Fa-f]+', cue_param_value):
-                    self._cue_type = SegmentationType(int(cue_param_value, 16))
-                else:
-                    self._cue_type = SegmentationType(int(cue_param_value))
-            elif cue_param_name == "UPID":
-                self._upid = cue_param_value
-            elif cue_param_name == "BLACKOUT":
-                self._blackout = cue_param_value
-            elif cue_param_name == "CUE-OUT":
-                self._cue_out = cue_param_value
-            elif cue_param_name == "CUE-IN":
-                self._cue_in = cue_param_value
-            elif cue_param_name == "SEGNE":
-                self._segne = cue_param_value
+        # Attribute Name: DURATION
+        # Attribute Type: Double
+        # Attribute Required: Optional
+        # Description: The duration of the signaled sequence defined by the CUE. The duration is
+        #   expressed in seconds to millisecond accuracy.
+        m_duration = re.match(r'.*DURATION=([0-9]+(?:\.[0-9]+)?).*',
+                              cue_params)
+        if m_duration:
+            try:
+                output_components['DURATION'] = float(m_duration.group(1))
+            except IndexError:
+                # Duration is optional
+                pass
+
+        # Attribute Name: ELAPSED
+        # Attribute Type: Double
+        # Attribute Required: Optional
+        # Description: Offset from the CUE (typically a start segmentation type) of the
+        #   earliest presentation time of the HLS media segment that follows. If an
+        #   implementation removes fragments from the manifest file (ex. live application),
+        #   the ELAPSED value shall be adjusted by the duration of the media segments removed.
+        #   Elapsed is expressed in seconds to millisecond accuracy.
+        m_elapsed = re.match(r'.*ELAPSED=([0-9]+(?:\.[0-9]+)?).*',
+                             cue_params)
+        if m_elapsed:
+            try:
+                output_components['ELAPSED'] = float(m_elapsed.group(1))
+            except IndexError:
+                # Elapsed is optional
+                pass
+
+        # Attribute Name: ID
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: A unique value identifying the CUE.
+        m_id = re.match(r'.*ID=\"([^\"]+)\".*',
+                        cue_params)
+        if m_id:
+            try:
+                output_components['ID'] = m_id.group(1)
+            except IndexError:
+                # ID is optional
+                pass
+
+        # Attribute Name: TIME
+        # Attribute Type: Double
+        # Attribute Required: Optional
+        # Description: TIME represents the start time of the signaled sequence.
+        #   If present in a stream, the SCTE 35 time descriptor should be utilized
+        #   as the time basis.
+        m_time = re.match(r'.*TIME=([0-9]+(?:\.[0-9]+)?).*',
+                          cue_params)
+        if m_time:
+            try:
+                output_components['TIME'] = float(m_time.group(1))
+            except IndexError:
+                # Time is optional
+                pass
+
+        # Attribute Name: TYPE
+        # Attribute Type: Integer
+        # Attribute Required: Optional
+        # Description: If present, the segmentation type id from the SCTE 35 segmentation descriptor.
+        # Try first with hex representation
+        m_type = re.match(r'.*TYPE=(0x[0-9A-Fa-f]+).*',
+                          cue_params)
+        if m_type:
+            try:
+                output_components['TYPE'] = int(m_type.group(1), 16)
+            except IndexError:
+                # Time is optional
+                pass
+        else:
+            # Try again with decimal
+            m_type = re.match(r'.*TYPE=([0-9]+).*',
+                              cue_params)
+            if m_type:
+                try:
+                    output_components['TYPE'] = int(m_type.group(1))
+                except IndexError:
+                    # Time is optional
+                    pass
+
+        # Attribute Name: UPID
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: Quoted string containing the segmentation_upid_type and the
+        #   segmentation_upid seperated by a colon.
+        # TODO: UPID can be an ascii string representation of the decoded binary, need
+        #   to find examples.
+        m_upid = re.match(r'.*UPID=\"?(0[xX][0-9A-Fa-f]+:0[xX][0-9A-Fa-f]+)\"?.*',
+                          cue_params)
+        if m_upid:
+            try:
+                output_components['UPID'] = m_upid.group(1)
+            except IndexError:
+                # UPID is optional
+                pass
+
+        # Attribute Name: BLACKOUT
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: Enumeration of delivery restriction states as determined by business
+        #   logic in the packager. Valid values are: YES, NO (default), MAYBE
+        m_blackout = re.match(r'.*BLACKOUT=((?:YES)|(?:NO)|(?:MAYBE)).*',
+                              cue_params)
+        if m_blackout:
+            try:
+                output_components['BLACKOUT'] = m_blackout.group(1)
+            except IndexError:
+                # BLACKOUT is optional
+                pass
+
+        # Attribute Name: CUE-OUT
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: Signal to begin ad insertion. Valid values are: YES, NO (default), CONT
+        m_cueout = re.match(r'.*CUE-OUT=((?:YES)|(?:NO)|(?:CONT)).*',
+                            cue_params)
+        if m_cueout:
+            try:
+                output_components['CUE-OUT'] = m_cueout.group(1)
+            except IndexError:
+                # CUE-OUT is optional
+                pass
+
+        # Attribute Name: CUE-IN
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: Signal to stop replacing content. Valid values are: YES, NO (default).
+        m_cuein = re.match(r'.*CUE-IN=((?:YES)|(?:NO)).*',
+                           cue_params)
+        if m_cuein:
+            try:
+                output_components['CUE-IN'] = m_cuein.group(1)
+            except IndexError:
+                # CUE-IN is optional
+                pass
+
+        # Attribute Name: SEGNE
+        # Attribute Type: String
+        # Attribute Required: Optional
+        # Description: Values from the seg_num and seg_expected fields, expressed as decimal
+        #   integers and delimited with a colon
+        m_segne = re.match(r'.*SEGNE=\"?([0-9]+:[0-9]+)\"?.*',
+                           cue_params)
+        if m_segne:
+            try:
+                output_components['SEGNE'] = m_segne.group(1)
+            except IndexError:
+                # SEGNE is optional
+                pass
+
+        return output_components
 
     @property
     def cue(self) -> SpliceInfoSection:
@@ -883,4 +1065,3 @@ class HlsCueTag(object):
             return self._segne
         else:
             raise FieldNotDefinedException()
-

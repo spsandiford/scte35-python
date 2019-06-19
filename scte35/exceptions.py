@@ -31,3 +31,6 @@ class NoSegmentationDescriptorException(Exception):
 class FieldNotDefinedException(Exception):
     pass
 
+
+class MissingCueException(Exception):
+    pass
